@@ -1,0 +1,79 @@
+version: '3.7'
+
+services:
+  postgres:
+    container_name: postgres
+    image: postgres:13-alpine
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - 'POSTGRES_DB=${DATABASE_NAME}'
+      - 'POSTGRES_USER=${DATABASE_USER}'
+      - 'POSTGRES_PASSWORD=${DATABASE_PASSWORD}'
+    ports:
+      - '${DATABASE_PORT}:5432'
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -d ${DATABASE_NAME} -U ${DATABASE_USER}" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - ./tmp/postgres-dev:/var/lib/postgresql/data
+    networks:
+      - proxy-net-dev
+
+  webapi:
+    container_name: webapi
+    restart: always
+    build:
+      context: .
+      target: backenddev
+    env_file:
+      - .env
+    ports:
+      - '${DJANGO_PORT}:${DJANGO_PORT}'
+    volumes:
+      - ./:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - proxy-net-dev
+
+  celery:
+    build:
+      context: .
+      target: backenddev
+    container_name: celery
+    restart: unless-stopped
+    command: celery -A project worker -B -l INFO
+    volumes:
+      - ./:/app
+    env_file:
+      - .env
+    depends_on:
+      - webapi
+      - redis
+    networks:
+      - proxy-net-dev
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    restart: unless-stopped
+    env_file:
+      - .env
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    ports:
+      - "${REDIS_PORT}:6379"
+    volumes:
+      - ./tmp/redis_dev:/data
+    healthcheck:
+      test: [ "CMD", "redis-cli","ping" ]
+    networks:
+      - proxy-net-dev
+
+networks:
+  proxy-net-dev:
+    name: internal_network_for_dev
